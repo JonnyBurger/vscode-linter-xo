@@ -1,6 +1,6 @@
 import * as path from 'path';
-import { workspace, window, commands, ExtensionContext } from 'vscode';
-import { LanguageClient, LanguageClientOptions, SettingMonitor, RequestType, TransportKind, TextDocumentIdentifier, TextEdit, Protocol2Code } from 'vscode-languageclient';
+import { workspace, window, commands, ExtensionContext , Disposable} from 'vscode';
+import { LanguageClient, LanguageClientOptions, SettingMonitor, RequestType, TransportKind, TextDocumentIdentifier, TextEdit } from 'vscode-languageclient';
 
 interface AllFixesParams {
 	textDocument: TextDocumentIdentifier;
@@ -12,8 +12,10 @@ interface AllFixesResult {
 }
 
 namespace AllFixesRequest {
-	export const type: RequestType<AllFixesParams, AllFixesResult, void> = { get method() { return 'textDocument/xo/allFixes'; } };
+	export const type = new RequestType<AllFixesParams, AllFixesResult, void, void>('textDocument/xo/allFixes');
 }
+
+let xoCommands: [Disposable];
 
 export function activate(context: ExtensionContext) {
 	// We need to go one level up since an extension compile the js code into
@@ -46,7 +48,7 @@ export function activate(context: ExtensionContext) {
 
 			textEditor.edit(mutator => {
 				for(const edit of edits) {
-					mutator.replace(Protocol2Code.asRange(edit.range), edit.newText);
+					mutator.replace(client.protocol2CodeConverter.asRange(edit.range), edit.newText);
 				}
 			}).then((success) => {
 				if (!success) {
@@ -72,8 +74,19 @@ export function activate(context: ExtensionContext) {
 		});
 	}
 
+	deactivate();
+
+	const command = commands.registerCommand('xo.fix', fixAllProblems);
+	xoCommands = [command];
 	context.subscriptions.push(
 		new SettingMonitor(client, 'xo.enable').start(),
-		commands.registerCommand('xo.fix', fixAllProblems)
+		command
 	);
+	xoCommands.push(command);
+}
+
+export function deactivate() {
+	if (xoCommands) {
+		xoCommands.forEach(command => command.dispose());
+	}
 }

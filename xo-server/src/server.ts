@@ -22,7 +22,7 @@ interface AllFixesResult {
 }
 
 namespace AllFixesRequest {
-	export const type: RequestType<AllFixesParams, AllFixesResult, void> = { get method() { return 'textDocument/xo/allFixes'; } };
+	export const type = new RequestType<AllFixesParams, AllFixesResult, void, void>('textDocument/xo/allFixes');
 }
 
 class Linter {
