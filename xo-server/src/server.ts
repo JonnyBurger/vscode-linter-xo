@@ -25,11 +25,104 @@ namespace AllFixesRequest {
 	export const type = new RequestType<AllFixesParams, AllFixesResult, void, void>('textDocument/xo/allFixes');
 }
 
+interface ValidationCallback {
+	(document: TextDocument): Thenable<void> | void;
+}
+
+namespace Thenable {
+	export function is<T>(value: any): value is Thenable<T> {
+		let candidate: Thenable<T> = value;
+		return candidate && typeof candidate.then === 'function';
+	}
+}
+
+class ValidationQueueElement {
+	uri: string;
+	document: TextDocument;
+	constructor(uri: string, document: TextDocument) {
+		this.uri = uri;
+		this.document = document;
+	}
+}
+
+class ValidationQueue {
+	private _queue: ValidationQueueElement[];
+	private _onValidate: ValidationCallback;
+	private _timer: NodeJS.Timer | undefined;
+	private _pendingValidation: Thenable<void> | undefined;
+	constructor(onValidate: ValidationCallback) {
+		this._queue = [];
+		this._onValidate = onValidate;
+	}
+
+	public add(document: TextDocument) : void {
+		this._queue.push(new ValidationQueueElement(document.uri, document));
+		this.trigger();
+	}
+
+	private trigger(): void {
+		if (this._pendingValidation) {
+			return;
+		}
+		this._timer = setImmediate(() => {
+			this._timer = undefined;
+			this.processQueue();
+		});
+	}
+
+	private removeAllButLastOfDocumentType(validationQueueElement: ValidationQueueElement) {
+		// Find the last item:
+		// 1. Clone the array because .reverse() is mutable
+		const clone = [...this._queue];
+		// 2. Reverse it
+		clone.reverse();
+		// 3. Find the first element
+		const lastOfDocumentType = this._queue.find((element: ValidationQueueElement) => element.uri === validationQueueElement.uri);
+
+		// If 0 documents of type in here, nothing to do.
+		if (!lastOfDocumentType) {
+			return;
+		}
+		// Otherwise, remove all except the first.
+		this._queue = this._queue.filter((element: ValidationQueueElement) => element !== lastOfDocumentType || element.uri !== lastOfDocumentType.uri);
+	}
+
+	private getFirst(): ValidationQueueElement | undefined {
+		let firstDocument = this._queue[0];
+		if (!firstDocument) {
+			return null;
+		}
+		this.removeAllButLastOfDocumentType(firstDocument);
+		return this._queue[0];
+	}
+
+	private processQueue(): void {
+		let element = this.getFirst();
+		if (!element) {
+			return;
+		}
+		let result = this._onValidate(element.document);
+		if (Thenable.is<void>(result)) {
+			this._pendingValidation = result;
+			result.then(() => {
+				this._pendingValidation = undefined;
+				this.trigger();
+			}, () => {
+				this._pendingValidation = undefined;
+				this.trigger();
+			});
+		} else {
+			this.trigger();
+		}
+	}
+}
+
 class Linter {
 
 	private connection: IConnection;
 	private documents: TextDocuments;
 	private package: Package;
+	private validationQueue: ValidationQueue;
 
 	private workspaceRoot: string;
 	private lib: any;
@@ -40,12 +133,16 @@ class Linter {
 		this.connection = createConnection(new IPCMessageReader(process), new IPCMessageWriter(process));
 		this.documents = new TextDocuments();
 
+		this.validationQueue = new ValidationQueue(document => {
+			this.validateSingle(document);
+		});
+
 		// Listen for text document create, change
 		this.documents.listen(this.connection);
 
 		// Validate document if it changed
 		this.documents.onDidChangeContent(event => {
-			this.validateSingle(event.document);
+			this.validationQueue.add(event.document);
 		});
 
 		// Clear the diagnostics when document is closed
