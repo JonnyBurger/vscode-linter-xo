@@ -84,7 +84,7 @@ class ValidationQueue {
 			return;
 		}
 		// Otherwise, remove all except the first.
-		this._queue = this._queue.filter((element: ValidationQueueElement) => element !== lastOfDocumentType || element.uri !== lastOfDocumentType.uri);
+		this._queue = this._queue.filter((element: ValidationQueueElement) => element === lastOfDocumentType || element.uri !== lastOfDocumentType.uri);
 	}
 
 	private getFirst(): ValidationQueueElement | undefined {
